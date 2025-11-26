@@ -30,8 +30,10 @@ app.whenReady().then(async () => {
   // Start HTTP API server (for Claude app communication)
   await startApiServer();
 
-  // Check if shield was active
-  shieldActive = await hasHostsEntries();
+  // Enable shield by default on startup
+  const blocked = getBlockedDomains();
+  const success = await updateHostsFileWithSudo(blocked);
+  shieldActive = success;
   updateTrayMenu();
 });
 
