@@ -6,10 +6,11 @@
  * Exposes HTTP API on localhost for Claude app integration.
  */
 
-import { app, Tray, Menu, nativeImage, shell, dialog } from 'electron';
+import { app, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
 import { startApiServer, stopApiServer } from './api';
 import { store, getBlockedDomains, getActiveAllowances, addBlockedDomain } from './store';
 import { updateHostsFileWithSudo, hasHostsEntries, clearHostsEntries } from './blocker';
+import { generateClaudeContext, getActiveRules, getProfile } from './attention-copilot';
 
 let tray: Tray | null = null;
 let shieldActive = false;
@@ -94,7 +95,6 @@ export function updateTrayMenu() {
     {
       label: 'Add Block from Clipboard',
       click: async () => {
-        const { clipboard } = await import('electron');
         const domain = clipboard.readText().trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 
         if (!domain || !domain.includes('.') || domain.includes(' ')) {
@@ -121,6 +121,90 @@ export function updateTrayMenu() {
           }
           updateTrayMenu();
         }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '🤖 Argue with Claude',
+      click: async () => {
+        // Generate context and copy to clipboard
+        const context = generateClaudeContext();
+        const prompt = `${context}
+
+---
+
+**I'd like to discuss my focus management.** You are my attention copilot. I can:
+- Request temporary access to a blocked site (with reasoning)
+- Add new sites to block
+- Create natural language rules (e.g., "No YouTube before 6pm on weekdays")
+- Update my goals and preferences
+- Start a focus session
+- Defer content to a better time (e.g., "remind me to watch this tonight")
+
+What would you like to help me with?`;
+
+        clipboard.writeText(prompt);
+
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'Argue with Claude',
+          message: 'Context copied to clipboard!',
+          detail: 'Open Claude and paste (Cmd+V) to start the conversation with full context about your focus settings.',
+          buttons: ['Open Claude', 'Cancel'],
+          defaultId: 0,
+        }).then(({ response }) => {
+          if (response === 0) {
+            shell.openExternal('https://claude.ai/new');
+          }
+        });
+      },
+    },
+    {
+      label: 'Request Access (Clipboard URL)',
+      click: async () => {
+        const url = clipboard.readText().trim();
+
+        if (!url.startsWith('http')) {
+          await dialog.showMessageBox({
+            type: 'warning',
+            title: 'Invalid URL',
+            message: 'Copy a URL to clipboard first',
+          });
+          return;
+        }
+
+        // Generate context with the specific URL
+        const context = generateClaudeContext();
+        const prompt = `${context}
+
+---
+
+**ACCESS REQUEST**
+
+I want to access: ${url}
+
+Please help me think through whether this makes sense right now. Consider:
+- Is this the right time?
+- Is this specific content or general browsing?
+- Should I defer this to later?
+- What's my honest reason for wanting this?
+
+I'll explain my reasoning:`;
+
+        clipboard.writeText(prompt);
+
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'Request Access',
+          message: 'Request context copied!',
+          detail: `URL: ${url}\n\nOpen Claude and paste to discuss whether to allow access.`,
+          buttons: ['Open Claude', 'Cancel'],
+          defaultId: 0,
+        }).then(({ response }) => {
+          if (response === 0) {
+            shell.openExternal('https://claude.ai/new');
+          }
+        });
       },
     },
     { type: 'separator' },
