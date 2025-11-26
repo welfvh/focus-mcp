@@ -49,8 +49,8 @@ app.get('/status', async (_req: Request, res: Response) => {
     app: 'Focus Shield',
     version: '0.1.0',
     shieldActive: isShieldActive(),
-    blockedDomains: getBlockedDomains().length,
-    activeAllowances: getActiveAllowances().length,
+    blockedDomains: getBlockedDomains(),
+    activeAllowances: getActiveAllowances(),
   });
 });
 

@@ -122,10 +122,18 @@ function App() {
       .catch(() => {});
   }, []);
 
-  const openClaudeChat = (prompt: string) => {
-    // Use Claude's deep link
+  const openClaudeChat = async (prompt: string) => {
+    // Use Claude desktop app's URL scheme
     const encoded = encodeURIComponent(prompt);
-    window.open(`https://claude.ai/new?q=${encoded}`, '_blank');
+    // claude:// scheme opens the Claude desktop app
+    const url = `claude://new?q=${encoded}`;
+    // @ts-ignore - focusShield is exposed via preload
+    if (window.focusShield?.openExternal) {
+      await window.focusShield.openExternal(url);
+    } else {
+      // Fallback to web if desktop app not available
+      window.open(`https://claude.ai/new?q=${encoded}`, '_blank');
+    }
   };
 
   const handleArgueWithClaude = () => {
@@ -140,21 +148,50 @@ function App() {
 ${state.blockedDomains.slice(0, 10).join(', ')}${state.blockedDomains.length > 10 ? ` (+${state.blockedDomains.length - 10} more)` : ''}
 
 ## Your Role
-You are my attention copilot. Help me make conscious choices about my attention. I can:
-- Request temporary access to a blocked site (with reasoning)
+You are my attention copilot. Help me make conscious choices about my attention.
+
+## How to Make Changes (API on localhost:8053)
+
+**Grant temporary access** (use when user has good reason):
+\`\`\`bash
+curl -X POST localhost:8053/api/grant -H "Content-Type: application/json" -d '{"domain":"youtube.com","minutes":30,"reason":"specific video for work"}'
+\`\`\`
+
+**Add a new block**:
+\`\`\`bash
+curl -X POST localhost:8053/api/block -H "Content-Type: application/json" -d '{"domain":"example.com"}'
+\`\`\`
+
+**Remove a block**:
+\`\`\`bash
+curl -X DELETE localhost:8053/api/block/example.com
+\`\`\`
+
+**Check status**:
+\`\`\`bash
+curl localhost:8053/status
+\`\`\`
+
+## What User Can Request
+- Temporary access to a blocked site (with reasoning)
 - Add new sites to block
-- Create natural language rules (e.g., "No YouTube before 6pm on weekdays")
-- Update my goals and preferences
-- Defer content to a better time
+- Create rules (you should help enforce via conversation)
+- Defer content to a better time ("remind me tonight")
 
 What would you like to discuss?`;
 
     openClaudeChat(prompt);
   };
 
-  const handleRequestAccess = () => {
-    const url = prompt('Enter URL you want to access:');
-    if (!url) return;
+  const handleRequestAccess = async () => {
+    // Get URL from clipboard instead of prompt (not supported in Electron)
+    const clipboardText = await navigator.clipboard.readText().catch(() => '');
+    const url = clipboardText.startsWith('http') ? clipboardText : '';
+
+    if (!url) {
+      alert('Copy a URL to clipboard first, then click Request Access');
+      return;
+    }
 
     const requestPrompt = `# Focus Shield - Access Request
 

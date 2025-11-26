@@ -1,10 +1,11 @@
 /**
  * Preload script for Focus Shield.
- * Minimal since this is primarily a menu bar app.
+ * Exposes safe APIs to the renderer.
  */
 
-import { contextBridge } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('focusShield', {
   version: '0.1.0',
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 });

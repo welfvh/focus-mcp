@@ -6,8 +6,13 @@
  * Exposes HTTP API on localhost for Claude app integration.
  */
 
-import { app, Tray, Menu, nativeImage, shell, dialog, clipboard, BrowserWindow } from 'electron';
+import { app, Tray, Menu, nativeImage, shell, dialog, clipboard, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
+
+// IPC handler for opening external URLs
+ipcMain.handle('open-external', async (_event, url: string) => {
+  await shell.openExternal(url);
+});
 import { startApiServer, stopApiServer } from './api';
 import { store, getBlockedDomains, getActiveAllowances, addBlockedDomain } from './store';
 import { updateHostsFileWithSudo, hasHostsEntries, clearHostsEntries } from './blocker';
@@ -35,8 +40,8 @@ function createWindow() {
   });
 
   // Load the renderer
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
@@ -44,6 +49,11 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Open dev tools in development
+  if (process.env.NODE_ENV !== 'production') {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
 }
 
 function showWindow() {
