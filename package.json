@@ -1,0 +1,39 @@
+{
+  "name": "focus-shield",
+  "version": "0.1.0",
+  "description": "DNS-level distraction blocker - menu bar app with Claude integration",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron-store": "^10.0.0",
+    "express": "^4.21.0",
+    "dns2": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.welf.focus-shield",
+    "productName": "Focus Shield",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "resources/icon.icns",
+      "target": "dmg",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    }
+  }
+}
