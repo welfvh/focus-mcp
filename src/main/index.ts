@@ -6,14 +6,54 @@
  * Exposes HTTP API on localhost for Claude app integration.
  */
 
-import { app, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
+import { app, Tray, Menu, nativeImage, shell, dialog, clipboard, BrowserWindow } from 'electron';
+import { join } from 'path';
 import { startApiServer, stopApiServer } from './api';
 import { store, getBlockedDomains, getActiveAllowances, addBlockedDomain } from './store';
 import { updateHostsFileWithSudo, hasHostsEntries, clearHostsEntries } from './blocker';
 import { generateClaudeContext, getActiveRules, getProfile } from './attention-copilot';
 
 let tray: Tray | null = null;
+let mainWindow: BrowserWindow | null = null;
 let shieldActive = false;
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 420,
+    height: 700,
+    minWidth: 360,
+    minHeight: 500,
+    title: 'Focus Shield',
+    titleBarStyle: 'hiddenInset',
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // Load the renderer
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.loadURL('http://localhost:5173');
+  } else {
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+function showWindow() {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+}
 
 // Prevent multiple instances
 const gotLock = app.requestSingleInstanceLock();
@@ -21,11 +61,12 @@ if (!gotLock) {
   app.quit();
 }
 
-// Hide dock icon (menu bar app only)
-app.dock?.hide();
+// Show dock icon when app has windows (otherwise menu bar only)
+// app.dock?.hide(); // Commented out to show dock when dashboard is open
 
 app.whenReady().then(async () => {
   createTray();
+  createWindow(); // Show dashboard on startup
 
   // Start HTTP API server (for Claude app communication)
   await startApiServer();
@@ -70,6 +111,11 @@ export function updateTrayMenu() {
     {
       label: shieldActive ? '🟢 Shield Active' : '🔴 Shield Inactive',
       enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: '📊 Open Dashboard',
+      click: () => showWindow(),
     },
     { type: 'separator' },
     {
