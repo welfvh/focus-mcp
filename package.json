@@ -4,8 +4,8 @@
   "description": "Restrictive menu bar app - blocks distractions, requires Claude negotiation to unblock",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev --ignoreConfigWarnings",
-    "build": "electron-vite build --ignoreConfigWarnings",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
     "start": "electron .",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"

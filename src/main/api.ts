@@ -13,6 +13,8 @@
 
 import express, { Request, Response } from 'express';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 import {
   isDomainBlocked,
   grantAllowance,
@@ -22,6 +24,12 @@ import {
   getBlockedDomains,
   getActiveAllowances,
   getAllowanceRemaining,
+  isDomainDelayed,
+  getDelaySeconds,
+  recordDelayAccess,
+  isInActiveSession,
+  updateSessionAccess,
+  getDelayedDomains,
 } from './store';
 import { updateHostsFileWithSudo, clearHostsEntries, hasHostsEntries } from './blocker';
 import { updateTrayMenu, isShieldActive, setShieldActive } from './index';
@@ -199,6 +207,98 @@ app.post('/api/shield/disable', async (_req: Request, res: Response) => {
   } else {
     res.status(500).json({ error: 'Failed to disable shield - user may have cancelled' });
   }
+});
+
+/**
+ * GET /delay - Serve delay countdown page for delayed domains
+ * Query params: domain, delay (seconds), count (access count today)
+ */
+app.get('/delay', (req: Request, res: Response) => {
+  const domain = req.query.domain as string;
+  const delay = parseInt(req.query.delay as string || '10', 10);
+  const count = parseInt(req.query.count as string || '0', 10);
+
+  // Calculate next delay
+  const nextDelay = Math.min(10 * Math.pow(2, count + 1), 160);
+
+  const delayPagePath = path.join(__dirname, 'delay-page.html');
+
+  if (fs.existsSync(delayPagePath)) {
+    const html = fs.readFileSync(delayPagePath, 'utf8');
+    res.send(html);
+  } else {
+    // Fallback if file not found
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>Focus Shield - Delay</title></head>
+      <body>
+        <h1>Focus Shield</h1>
+        <p>Delayed access to: ${domain}</p>
+        <p>Wait ${delay} seconds...</p>
+        <script>
+          setTimeout(() => {
+            window.location.href = 'https://${domain}';
+          }, ${delay * 1000});
+        </script>
+      </body>
+      </html>
+    `);
+  }
+});
+
+/**
+ * GET /api/check-delay/:domain - Check if domain should be delayed
+ * Returns delay info or pass-through status
+ */
+app.get('/api/check-delay/:domain', (req: Request, res: Response) => {
+  const { domain } = req.params;
+
+  // Check if domain is delayed
+  if (!isDomainDelayed(domain)) {
+    res.json({ delayed: false, passThrough: true });
+    return;
+  }
+
+  // Check if in active session
+  if (isInActiveSession(domain)) {
+    updateSessionAccess(domain); // Keep session alive
+    res.json({ delayed: false, inSession: true, passThrough: true });
+    return;
+  }
+
+  // Need to delay
+  const delaySeconds = getDelaySeconds(domain);
+  const sessions = require('./store').store.get('delaySessions', []);
+  const session = sessions.find((s: any) => s.domain === domain);
+  const accessCount = session?.accessCount || 0;
+  const nextDelay = Math.min(10 * Math.pow(2, accessCount + 1), 160);
+
+  res.json({
+    delayed: true,
+    delaySeconds,
+    accessCount,
+    nextDelay,
+    redirectUrl: `/delay?domain=${domain}&delay=${delaySeconds}&count=${accessCount}`
+  });
+});
+
+/**
+ * POST /api/delay-complete - Called after delay countdown finishes
+ * Records the access and grants session allowance
+ */
+app.post('/api/delay-complete', (req: Request, res: Response) => {
+  const { domain } = req.body;
+
+  if (!domain) {
+    res.status(400).json({ error: 'domain required' });
+    return;
+  }
+
+  // Record the access (increments count)
+  recordDelayAccess(domain);
+
+  res.json({ success: true, message: 'Access recorded, session started' });
 });
 
 /**
