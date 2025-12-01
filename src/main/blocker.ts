@@ -367,6 +367,51 @@ async function updatePfRules(rules: string): Promise<boolean> {
 }
 
 /**
+ * Pulse pf to kill existing connections to blocked domains.
+ * Briefly blocks IPs via pf (sends RST), then clears rules.
+ * This forces browsers to drop keep-alive connections.
+ */
+export async function pfPulseKill(domains: string[]): Promise<void> {
+  try {
+    // Resolve current IPs for domains
+    const ipsToBlock = new Set<string>();
+    for (const domain of domains.slice(0, 20)) { // Limit to avoid too many DNS lookups
+      try {
+        const ips = await resolveToIPs(domain);
+        ips.ipv4.forEach(ip => ipsToBlock.add(ip));
+      } catch {
+        // Skip domains that don't resolve
+      }
+    }
+
+    if (ipsToBlock.size === 0) {
+      log('No IPs to pulse-block');
+      return;
+    }
+
+    // Build pf rules
+    const rules: string[] = ['# Pulse kill - temporary block to reset connections'];
+    for (const ip of ipsToBlock) {
+      rules.push(`block return out quick proto tcp from any to ${ip}`);
+    }
+
+    log(`Pulsing pf to kill ${ipsToBlock.size} IPs...`);
+    await updatePfRules(rules.join('\n'));
+
+    // Wait 3 seconds for connections to die
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Clear pf rules
+    await updatePfRules('# Pulse complete - cleared\n');
+    log('PF pulse complete - connections killed');
+  } catch (err) {
+    logError('PF pulse failed:', err);
+    // Clear pf rules anyway to avoid leaving blocks
+    await updatePfRules('# Cleared after error\n');
+  }
+}
+
+/**
  * Enable dual-layer blocking (hosts file + pf).
  * All privileged operations go through the daemon at /tmp/focusshield.sock.
  */
@@ -389,11 +434,13 @@ export async function enableBlocking(domains: string[]): Promise<boolean> {
     // LAYER 2: pf rules DISABLED - YouTube IPs overlap with Google services
     // and blocking them breaks Google Search, Gmail, etc.
     // Hosts-only blocking is sufficient and safer.
+    // Clear any stale pf rules from previous sessions
+    await updatePfRules('# Focus Shield - pf layer disabled (hosts-only mode)\n');
 
     // Flush DNS cache locally as well (daemon does this too)
     await flushDnsCache();
 
-    log('Dual-layer blocking enabled (hosts + pf)');
+    log('Blocking enabled (hosts-only mode)');
     return true;
   } catch (err) {
     logError('Failed to enable blocking:', err);

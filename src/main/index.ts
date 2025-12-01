@@ -1,69 +1,23 @@
 /**
  * Focus Shield - Main Process
  *
- * Menu bar app that blocks distracting sites.
+ * Restrictive menu bar app that blocks distracting sites.
  * Uses /etc/hosts for blocking (requires one-time sudo via GUI prompt).
  * Exposes HTTP API on localhost for Claude app integration.
+ *
+ * No dashboard UI - all unblocking requires talking to Claude.
  */
 
-import { app, Tray, Menu, nativeImage, shell, dialog, clipboard, BrowserWindow, ipcMain } from 'electron';
-import { join } from 'path';
-
-// IPC handler for opening external URLs
-ipcMain.handle('open-external', async (_event, url: string) => {
-  await shell.openExternal(url);
-});
+import { app, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
 import { startApiServer, stopApiServer } from './api';
 import { store, getBlockedDomains, getActiveAllowances, addBlockedDomain } from './store';
-import { updateHostsFileWithSudo, hasHostsEntries, clearHostsEntries } from './blocker';
-import { generateClaudeContext, getActiveRules, getProfile } from './attention-copilot';
+import { updateHostsFileWithSudo, clearHostsEntries, pfPulseKill } from './blocker';
+import { generateClaudeContext } from './attention-copilot';
 
 let tray: Tray | null = null;
-let mainWindow: BrowserWindow | null = null;
 let shieldActive = false;
-
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 420,
-    height: 700,
-    minWidth: 360,
-    minHeight: 500,
-    title: 'Focus Shield',
-    titleBarStyle: 'hiddenInset',
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  // Load the renderer
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-  }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
-  // Open dev tools in development
-  if (process.env.NODE_ENV !== 'production') {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  }
-}
-
-function showWindow() {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-  } else {
-    createWindow();
-  }
-}
+let allowanceCheckInterval: NodeJS.Timeout | null = null;
+let lastAllowanceCount = 0;
 
 // Prevent multiple instances
 const gotLock = app.requestSingleInstanceLock();
@@ -71,12 +25,36 @@ if (!gotLock) {
   app.quit();
 }
 
-// Show dock icon when app has windows (otherwise menu bar only)
-// app.dock?.hide(); // Commented out to show dock when dashboard is open
+// Hide dock icon - menu bar only
+app.dock?.hide();
+
+/**
+ * Check for expired allowances and re-block if needed.
+ * Runs every 30 seconds to catch expiring allowances.
+ */
+async function checkAllowanceExpiry(): Promise<void> {
+  if (!shieldActive) return;
+
+  const currentAllowances = getActiveAllowances();
+  const currentCount = currentAllowances.length;
+
+  // If allowance count decreased, an allowance expired - refresh blocking
+  if (currentCount < lastAllowanceCount) {
+    console.log(`Allowance expired (${lastAllowanceCount} -> ${currentCount}), refreshing blocks...`);
+    const domains = getBlockedDomains();
+    await updateHostsFileWithSudo(domains);
+
+    // Pulse pf to kill existing browser connections
+    await pfPulseKill(domains);
+
+    updateTrayMenu();
+  }
+
+  lastAllowanceCount = currentCount;
+}
 
 app.whenReady().then(async () => {
   createTray();
-  createWindow(); // Show dashboard on startup
 
   // Start HTTP API server (for Claude app communication)
   await startApiServer();
@@ -85,7 +63,11 @@ app.whenReady().then(async () => {
   const blocked = getBlockedDomains();
   const success = await updateHostsFileWithSudo(blocked);
   shieldActive = success;
+  lastAllowanceCount = getActiveAllowances().length;
   updateTrayMenu();
+
+  // Start allowance expiry checker (every 30 seconds)
+  allowanceCheckInterval = setInterval(checkAllowanceExpiry, 30000);
 });
 
 function createTray() {
@@ -124,155 +106,39 @@ export function updateTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: '📊 Open Dashboard',
-      click: () => showWindow(),
-    },
-    { type: 'separator' },
-    {
-      label: shieldActive ? 'Disable Shield' : 'Enable Shield',
+      label: '🤖 Talk to Claude (Unblock)',
       click: async () => {
-        if (shieldActive) {
-          const success = await clearHostsEntries();
-          if (success) shieldActive = false;
-        } else {
-          const success = await updateHostsFileWithSudo(blocked);
-          if (success) shieldActive = true;
-        }
-        updateTrayMenu();
-      },
-    },
-    {
-      label: 'Refresh Blocklist',
-      click: async () => {
-        if (shieldActive) {
-          await updateHostsFileWithSudo(blocked);
-        }
-        updateTrayMenu();
-      },
-    },
-    {
-      label: 'Add Block from Clipboard',
-      click: async () => {
-        const domain = clipboard.readText().trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-
-        if (!domain || !domain.includes('.') || domain.includes(' ')) {
-          await dialog.showMessageBox({
-            type: 'warning',
-            title: 'Invalid Domain',
-            message: 'Copy a valid domain to clipboard first (e.g., example.com)',
-          });
-          return;
-        }
-
-        const { response } = await dialog.showMessageBox({
-          type: 'question',
-          title: 'Add Block',
-          message: `Block "${domain}"?`,
-          buttons: ['Cancel', 'Block'],
-          defaultId: 1,
-        });
-
-        if (response === 1) {
-          addBlockedDomain(domain);
-          if (shieldActive) {
-            await updateHostsFileWithSudo(getBlockedDomains());
-          }
-          updateTrayMenu();
-        }
-      },
-    },
-    { type: 'separator' },
-    {
-      label: '🤖 Argue with Claude',
-      click: async () => {
-        // Generate context and copy to clipboard
         const context = generateClaudeContext();
         const prompt = `${context}
 
 ---
 
-**I'd like to discuss my focus management.** You are my attention copilot. I can:
-- Request temporary access to a blocked site (with reasoning)
-- Add new sites to block
-- Create natural language rules (e.g., "No YouTube before 6pm on weekdays")
-- Update my goals and preferences
-- Start a focus session
-- Defer content to a better time (e.g., "remind me to watch this tonight")
+**I want to access a blocked site.** You are my attention copilot - challenge me on whether this is genuinely necessary.
 
-What would you like to help me with?`;
+Before granting access, consider:
+- What specific content/task requires this site?
+- Is this the right time? (work hours? late night?)
+- Can this be deferred to later?
+- Are there alternative resources?
+
+Remember: "I want to" is not a reason. "I need to because X" requires X to be specific and urgent.
+
+To grant access, use:
+curl -X POST http://localhost:8053/api/grant -H "Content-Type: application/json" -d '{"domain":"example.com","minutes":15,"reason":"your reasoning"}'`;
 
         clipboard.writeText(prompt);
 
         await dialog.showMessageBox({
           type: 'info',
-          title: 'Argue with Claude',
+          title: 'Talk to Claude',
           message: 'Context copied to clipboard!',
-          detail: 'Open Claude and paste (Cmd+V) to start the conversation with full context about your focus settings.',
-          buttons: ['Open Claude', 'Cancel'],
+          detail: 'Open Claude Code and paste to negotiate access. Claude will challenge you before granting.',
+          buttons: ['OK'],
           defaultId: 0,
-        }).then(({ response }) => {
-          if (response === 0) {
-            shell.openExternal('https://claude.ai/new');
-          }
-        });
-      },
-    },
-    {
-      label: 'Request Access (Clipboard URL)',
-      click: async () => {
-        const url = clipboard.readText().trim();
-
-        if (!url.startsWith('http')) {
-          await dialog.showMessageBox({
-            type: 'warning',
-            title: 'Invalid URL',
-            message: 'Copy a URL to clipboard first',
-          });
-          return;
-        }
-
-        // Generate context with the specific URL
-        const context = generateClaudeContext();
-        const prompt = `${context}
-
----
-
-**ACCESS REQUEST**
-
-I want to access: ${url}
-
-Please help me think through whether this makes sense right now. Consider:
-- Is this the right time?
-- Is this specific content or general browsing?
-- Should I defer this to later?
-- What's my honest reason for wanting this?
-
-I'll explain my reasoning:`;
-
-        clipboard.writeText(prompt);
-
-        await dialog.showMessageBox({
-          type: 'info',
-          title: 'Request Access',
-          message: 'Request context copied!',
-          detail: `URL: ${url}\n\nOpen Claude and paste to discuss whether to allow access.`,
-          buttons: ['Open Claude', 'Cancel'],
-          defaultId: 0,
-        }).then(({ response }) => {
-          if (response === 0) {
-            shell.openExternal('https://claude.ai/new');
-          }
         });
       },
     },
     { type: 'separator' },
-    {
-      label: `Blocked Sites (${blocked.length})`,
-      submenu: blocked.slice(0, 20).map(domain => ({
-        label: domain,
-        enabled: false,
-      })),
-    },
     {
       label: `Active Passes (${allowances.length})`,
       submenu: allowances.length > 0
@@ -284,12 +150,6 @@ I'll explain my reasoning:`;
     },
     { type: 'separator' },
     {
-      label: 'API: localhost:8053',
-      click: () => {
-        shell.openExternal('http://localhost:8053/status');
-      },
-    },
-    {
       label: 'Start at Login',
       type: 'checkbox',
       checked: store.get('startAtLogin', false),
@@ -300,10 +160,10 @@ I'll explain my reasoning:`;
         });
       },
     },
-    { type: 'separator' },
     {
       label: 'Quit Focus Shield',
       click: () => {
+        if (allowanceCheckInterval) clearInterval(allowanceCheckInterval);
         stopApiServer();
         app.quit();
       },
