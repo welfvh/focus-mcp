@@ -10,6 +10,7 @@
 
 import { app, Tray, Menu, nativeImage, shell, dialog, clipboard } from 'electron';
 import { startApiServer, stopApiServer } from './api';
+import { startProxyServer, stopProxyServer } from './proxy';
 import { store, getBlockedDomains, getActiveAllowances, addBlockedDomain } from './store';
 import { updateHostsFileWithSudo, clearHostsEntries, pfPulseKill } from './blocker';
 import { generateClaudeContext } from './attention-copilot';
@@ -58,6 +59,9 @@ app.whenReady().then(async () => {
 
   // Start HTTP API server (for Claude app communication)
   await startApiServer();
+
+  // Start HTTP Proxy server (for delay interception)
+  await startProxyServer();
 
   // Enable shield by default on startup
   const blocked = getBlockedDomains();
@@ -165,6 +169,7 @@ curl -X POST http://localhost:8053/api/grant -H "Content-Type: application/json"
       click: () => {
         if (allowanceCheckInterval) clearInterval(allowanceCheckInterval);
         stopApiServer();
+        stopProxyServer();
         app.quit();
       },
     },

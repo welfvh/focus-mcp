@@ -29,16 +29,39 @@ After 15 minutes of inactivity, the next access triggers a new delay.
 - Progressive delay logic (10s → 160s)
 - Daily reset mechanism
 
-### 🚧 Not Yet Implemented
-The actual **redirect mechanism** to serve the delay page when you try to access a delayed domain.
+### ✅ Implemented: HTTP Proxy
+The delay system now uses an **HTTP proxy** to intercept requests and serve the delay page!
 
-### Manual Testing (For Now)
+**How it works:**
+1. Proxy server runs on `localhost:8080`
+2. System configured to route traffic through proxy
+3. When you try to access a delayed domain (like Gmail):
+   - Proxy intercepts the request
+   - Checks if domain is delayed
+   - Checks if you're in an active session (15 min window)
+   - If new session needed: serves delay countdown page
+   - After countdown: redirects to actual site and starts session
+4. Subsequent requests within 15 minutes pass through normally
 
-To test the delay system manually:
+**Setup:**
+```bash
+# Start Focus Shield (proxy starts automatically)
+npm run dev
 
-1. Navigate to: `http://localhost:8053/delay?domain=gmail.com&delay=10&count=0`
-2. Wait through the countdown
-3. Check session tracking: `curl http://localhost:8053/api/check-delay/gmail.com`
+# Configure system proxy
+./scripts/configure-proxy.sh
+
+# Or manually: System Settings → Network → Proxies
+# Set HTTP/HTTPS proxy to: 127.0.0.1:8080
+```
+
+**Testing:**
+1. Configure system proxy (see above)
+2. Open browser and navigate to gmail.com
+3. You'll see the delay countdown page
+4. After countdown, Gmail loads normally
+5. Keep using Gmail for 15 minutes - no more delays
+6. After 15 min idle, next access triggers new delay
 
 ## Future Implementation Options
 
