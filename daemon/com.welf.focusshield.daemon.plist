@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/node</string>
-        <string>/Users/welf/dev/cc-focus/daemon/daemon.js</string>
+        <string>/Users/welf/dev/cc-focus/daemon/daemon.cjs</string>
     </array>
 
     <key>RunAtLoad</key>

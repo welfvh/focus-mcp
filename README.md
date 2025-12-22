@@ -108,7 +108,7 @@ Social media, video streaming, news aggregators, adult content. See `src/store.t
 
 ```bash
 # Terminal 1: Daemon
-sudo node daemon/daemon.js
+sudo node daemon/daemon.cjs
 
 # Terminal 2: Server
 npm start
