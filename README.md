@@ -1,102 +1,129 @@
-# 🛡️ Claude Focus Shield
+# cc-focus
 
-DNS-level distraction blocker powered by Claude. The only way to access blocked sites is to argue your case with Claude.
-
-Part of the **welf vision**: Claude as AI OS UI/UX.
+DNS-level distraction blocker for macOS. Blocks distracting sites via `/etc/hosts` with a simple HTTP API.
 
 ## How it Works
 
-1. Focus Shield runs a local DNS server that intercepts queries
-2. Blocked domains (YouTube, Twitter, Reddit, etc.) resolve to localhost
-3. A block page appears where you must negotiate with Claude for access
-4. Claude evaluates your reason and grants time-limited access (or not)
+1. A **daemon** (runs as root) manages `/etc/hosts` entries
+2. A **server** provides an HTTP API on `localhost:8053`
+3. Blocked domains resolve to `0.0.0.0` - browser can't connect
+4. Temporary allowances can be granted via API
 
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Clone and install
+git clone https://github.com/welfvh/cc-focus.git
+cd cc-focus
 npm install
 
-# Start Focus Shield (requires sudo for DNS on port 53)
-sudo npm run start:dns
+# Install services (auto-start on boot)
+./install.sh
 
-# In another terminal, configure your DNS
-./scripts/setup-dns.sh enable
+# Verify
+curl localhost:8053/status
 ```
 
-## CLI Usage
+## API
 
 ```bash
+# Status
+curl localhost:8053/status
+
 # List blocked domains
-npx focus-shield list
+curl localhost:8053/api/blocked
 
-# Add a domain to blocklist
-npx focus-shield block example.com
+# Add domain to blocklist
+curl -X POST localhost:8053/api/block \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "youtube.com"}'
 
-# Remove a domain
-npx focus-shield unblock example.com
+# Remove domain
+curl -X DELETE localhost:8053/api/block/youtube.com
 
-# Request access via CLI (interactive)
-npx focus-shield access youtube.com
+# Grant temporary access (minutes)
+curl -X POST localhost:8053/api/grant \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "youtube.com", "minutes": 30, "reason": "work research"}'
 
-# Check active allowances
-npx focus-shield status
+# Revoke access
+curl -X DELETE localhost:8053/api/grant/youtube.com
 
-# Emergency manual grant (bypass Claude)
-npx focus-shield grant youtube.com 15
+# Enable/disable shield
+curl -X POST localhost:8053/api/shield/enable
+curl -X POST localhost:8053/api/shield/disable
+```
+
+### Delay Mode (Friction)
+
+For sites you want to use mindfully (not block entirely):
+
+```bash
+# Add to delay list
+curl -X POST localhost:8053/api/delay \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "gmail.com"}'
+
+# Progressive delays: 10s → 20s → 40s → 80s → 160s (resets daily)
 ```
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐
-│  Your Browser   │────▶│  DNS Server      │
-│                 │     │  (port 53)       │
-└─────────────────┘     └────────┬─────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    │                         │
-              Blocked?                   Not blocked
-                    │                         │
-                    ▼                         ▼
-         ┌──────────────────┐      ┌──────────────────┐
-         │  Block Page      │      │  Upstream DNS    │
-         │  (port 8053)     │      │  (8.8.8.8)       │
-         └────────┬─────────┘      └──────────────────┘
-                  │
-                  ▼
-         ┌──────────────────┐
-         │  Claude API      │
-         │  (negotiation)   │
-         └──────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    Your Mac                          │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Browser ──► /etc/hosts ──► 0.0.0.0 (blocked)      │
+│                   │                                 │
+│                   │ managed by                      │
+│                   ▼                                 │
+│  ┌─────────────────────────────────────────┐       │
+│  │  Daemon (root)                          │       │
+│  │  /tmp/focusshield.sock                  │       │
+│  └────────────────────┬────────────────────┘       │
+│                       │                             │
+│                       │ HTTP API                    │
+│                       ▼                             │
+│  ┌─────────────────────────────────────────┐       │
+│  │  Server (user)                          │       │
+│  │  localhost:8053                         │       │
+│  └─────────────────────────────────────────┘       │
+│                                                     │
+└─────────────────────────────────────────────────────┘
 ```
+
+## Default Blocked Sites
+
+Social media, video streaming, news aggregators, adult content. See `src/store.ts` for full list.
 
 ## Configuration
 
-Default blocked domains are defined in `src/config/defaults.ts`. Data is stored in `~/.focus-shield/`.
+- **Server config**: `~/.config/cc-focus/config.json`
+- **Daemon state**: `/Library/Application Support/FocusShield/state.json`
+- **Server logs**: `~/.config/cc-focus/server.log`
+- **Daemon logs**: `/var/log/cc-focus-daemon.log`
 
-### Environment Variables
+## Manual Start (Development)
 
-- `ANTHROPIC_API_KEY` - Your Claude API key (required)
-- `FOCUS_SHIELD_DATA` - Data directory (default: `~/.focus-shield`)
-- `FOCUS_SHIELD_INTERFACE` - Network interface (default: `Wi-Fi`)
+```bash
+# Terminal 1: Daemon
+sudo node daemon/daemon.js
 
-## The Philosophy
+# Terminal 2: Server
+npm start
+```
 
-This isn't about willpower. It's about creating **friction** between impulse and action.
+## Uninstall
 
-When you try to visit YouTube out of habit, you're forced to articulate *why*. Often, just being asked is enough to realize you don't actually need it. And when you do have a legitimate reason, Claude grants access.
+```bash
+./uninstall.sh
+```
 
-The goal: make Claude your AI ally in the fight against distraction.
+## Requirements
 
-## Roadmap
-
-- [ ] Menu bar app for macOS
-- [ ] Browser extension for HTTPS handling
-- [ ] Focus session modes (deep work, breaks, etc.)
-- [ ] Analytics on blocked attempts and patterns
-- [ ] Integration with calendar for automatic modes
-- [ ] Welf integration for deeper self-reflection
+- macOS (uses launchd, /etc/hosts)
+- Node.js 18+
 
 ## License
 

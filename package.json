@@ -1,38 +1,21 @@
 {
-  "name": "focus-shield",
-  "version": "0.1.0",
-  "description": "Restrictive menu bar app - blocks distractions, requires Claude negotiation to unblock",
-  "main": "out/main/index.js",
+  "name": "cc-focus",
+  "version": "1.0.0",
+  "description": "DNS-level distraction blocker - standalone server",
+  "main": "dist/server.js",
+  "type": "module",
   "scripts": {
-    "dev": "electron-vite build || true && electron .",
-    "build": "electron-vite build || true",
-    "start": "electron .",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "start": "npx tsx src/server.ts",
+    "build": "tsc",
+    "daemon": "sudo node daemon/daemon.js"
   },
   "dependencies": {
-    "electron-store": "^10.0.0",
     "express": "^4.21.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.7.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^2.3.0",
-    "typescript": "^5.6.2",
-    "vite": "^5.4.0"
-  },
-  "build": {
-    "appId": "com.welf.focus-shield",
-    "productName": "Focus Shield",
-    "mac": {
-      "category": "public.app-category.productivity",
-      "icon": "resources/icon.icns",
-      "target": "dmg",
-      "extendInfo": {
-        "LSUIElement": true
-      }
-    }
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
   }
 }

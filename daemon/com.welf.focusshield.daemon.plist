@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.welf.focusshield.helper</string>
+    <string>com.welf.focusshield.daemon</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/node</string>
-        <string>/usr/local/libexec/focusshield-helper.js</string>
+        <string>/Users/welf/dev/cc-focus/daemon/daemon.js</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -18,9 +18,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/var/log/focusshield-helper.log</string>
+    <string>/var/log/cc-focus-daemon.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/var/log/focusshield-helper.log</string>
+    <string>/var/log/cc-focus-daemon.log</string>
 </dict>
 </plist>

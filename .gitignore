@@ -1,12 +1,4 @@
 node_modules/
 dist/
-out/
 *.log
 .DS_Store
-
-# Local data
-.focus-shield/
-
-# Environment
-.env
-.env.local
