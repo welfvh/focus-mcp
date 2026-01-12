@@ -26,6 +26,7 @@ interface DelaySession {
 interface StoreSchema {
   blockedDomains: string[];
   delayedDomains: string[];
+  blockedPaths: Record<string, string[]>; // { domain: [path patterns] }
   allowances: Allowance[];
   delaySessions: DelaySession[];
 }
@@ -58,6 +59,7 @@ const DEFAULT_DELAYED: string[] = ['gmail.com', 'mail.google.com', 'are.na'];
 const DEFAULTS: StoreSchema = {
   blockedDomains: DEFAULT_BLOCKED,
   delayedDomains: DEFAULT_DELAYED,
+  blockedPaths: {},
   allowances: [],
   delaySessions: [],
 };
@@ -159,6 +161,32 @@ export function revokeAllowance(domain: string): void {
 
 export function getBlockedDomains(): string[] {
   return store.get('blockedDomains', []);
+}
+
+// Returns blocked domains minus those with active allowances (what should actually be in /etc/hosts)
+export function getEffectivelyBlockedDomains(): string[] {
+  const blocked = store.get('blockedDomains', []);
+  const allowances = store.get('allowances', []);
+  const now = Date.now();
+
+  // Get domains with active allowances
+  const allowedDomains = new Set(
+    allowances
+      .filter(a => a.expiresAt > now)
+      .map(a => normalizeDomain(a.domain))
+  );
+
+  // Filter out allowed domains and their subdomains
+  return blocked.filter(domain => {
+    const normalized = normalizeDomain(domain);
+    // Check if this domain or its parent has an allowance
+    for (const allowed of allowedDomains) {
+      if (normalized === allowed || normalized.endsWith('.' + allowed)) {
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 export function addBlockedDomain(domain: string): void {
@@ -279,4 +307,34 @@ export function removeDelayedDomain(domain: string): void {
   const normalized = normalizeDomain(domain);
   const delayed = store.get('delayedDomains', []);
   store.set('delayedDomains', delayed.filter(d => d !== normalized));
+}
+
+// Path blocking functions
+
+export function getBlockedPaths(): Record<string, string[]> {
+  return store.get('blockedPaths', {});
+}
+
+export function addBlockedPath(domain: string, pathPattern: string): void {
+  const normalized = normalizeDomain(domain);
+  const paths = store.get('blockedPaths', {});
+  if (!paths[normalized]) {
+    paths[normalized] = [];
+  }
+  if (!paths[normalized].includes(pathPattern)) {
+    paths[normalized].push(pathPattern);
+  }
+  store.set('blockedPaths', paths);
+}
+
+export function removeBlockedPath(domain: string, pathPattern: string): void {
+  const normalized = normalizeDomain(domain);
+  const paths = store.get('blockedPaths', {});
+  if (paths[normalized]) {
+    paths[normalized] = paths[normalized].filter((p: string) => p !== pathPattern);
+    if (paths[normalized].length === 0) {
+      delete paths[normalized];
+    }
+    store.set('blockedPaths', paths);
+  }
 }

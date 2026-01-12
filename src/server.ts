@@ -15,6 +15,7 @@ import {
   addBlockedDomain,
   removeBlockedDomain,
   getBlockedDomains,
+  getEffectivelyBlockedDomains,
   getActiveAllowances,
   getAllowanceRemaining,
   isDomainDelayed,
@@ -25,7 +26,18 @@ import {
   getDelayedDomains,
   addDelayedDomain,
   removeDelayedDomain,
+  getBlockedPaths,
+  addBlockedPath,
+  removeBlockedPath,
 } from './store';
+import {
+  startProxy,
+  getCACertPath,
+  setBlockedPaths,
+  addBlockedPath as proxyAddBlockedPath,
+  removeBlockedPath as proxyRemoveBlockedPath,
+  getBlockedPaths as proxyGetBlockedPaths,
+} from './proxy';
 import {
   enableBlocking,
   disableBlocking,
@@ -114,7 +126,8 @@ app.post('/api/grant', async (req: Request, res: Response) => {
   const allowance = grantAllowance(domain, minutes, reason || 'Granted via API');
 
   if (shieldActive) {
-    await enableBlocking(getBlockedDomains());
+    // Use effectively blocked domains (excludes domains with active allowances)
+    await enableBlocking(getEffectivelyBlockedDomains());
   }
 
   res.json({
@@ -131,7 +144,8 @@ app.delete('/api/grant/:domain', async (req: Request, res: Response) => {
   revokeAllowance(domain);
 
   if (shieldActive) {
-    await enableBlocking(getBlockedDomains());
+    // Use effectively blocked domains (re-add revoked domain to hosts)
+    await enableBlocking(getEffectivelyBlockedDomains());
   }
 
   res.json({ success: true, domain, revoked: true });
@@ -144,7 +158,8 @@ app.get('/api/allowances', (_req: Request, res: Response) => {
 
 // Enable shield
 app.post('/api/shield/enable', async (_req: Request, res: Response) => {
-  const success = await enableBlocking(getBlockedDomains());
+  // Use effectively blocked domains to respect active allowances
+  const success = await enableBlocking(getEffectivelyBlockedDomains());
   if (success) {
     shieldActive = true;
     res.json({ success: true, shieldActive: true });
@@ -217,13 +232,60 @@ app.post('/api/delay-complete', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Access recorded' });
 });
 
+// === Path blocking API ===
+
+// List blocked paths
+app.get('/api/paths', (_req: Request, res: Response) => {
+  res.json({ paths: getBlockedPaths() });
+});
+
+// Add blocked path
+app.post('/api/path', (req: Request, res: Response) => {
+  const { domain, path } = req.body;
+  if (!domain || !path) {
+    res.status(400).json({ error: 'domain and path required' });
+    return;
+  }
+  addBlockedPath(domain, path);
+  proxyAddBlockedPath(domain, path);
+  res.json({ success: true, domain, path, blocked: true });
+});
+
+// Remove blocked path
+app.delete('/api/path', (req: Request, res: Response) => {
+  const { domain, path } = req.body;
+  if (!domain || !path) {
+    res.status(400).json({ error: 'domain and path required' });
+    return;
+  }
+  removeBlockedPath(domain, path);
+  proxyRemoveBlockedPath(domain, path);
+  res.json({ success: true, domain, path, blocked: false });
+});
+
+// Get CA cert path for installation
+app.get('/api/proxy/ca', (_req: Request, res: Response) => {
+  res.json({ path: getCACertPath() });
+});
+
+// Flush DNS cache (calls daemon which runs as root)
+app.post('/api/flush-dns', async (_req: Request, res: Response) => {
+  try {
+    await flushDnsCache();
+    res.json({ success: true, message: 'DNS cache flushed' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to flush DNS', details: String(e) });
+  }
+});
+
 // Allowance expiry checker
 let lastAllowanceCount = 0;
 async function checkAllowanceExpiry(): Promise<void> {
   const current = getActiveAllowances().length;
   if (current < lastAllowanceCount && shieldActive) {
     console.log(`Allowance expired (${lastAllowanceCount} -> ${current}), refreshing...`);
-    await enableBlocking(getBlockedDomains());
+    // Re-block expired domains
+    await enableBlocking(getEffectivelyBlockedDomains());
   }
   lastAllowanceCount = current;
 }
@@ -233,14 +295,27 @@ async function start(): Promise<void> {
   // Check daemon
   const daemonRunning = await isDaemonRunning();
   if (!daemonRunning) {
-    console.error('⚠️  Daemon not running. Start with: sudo node daemon/daemon.js');
+    console.error('⚠️  Daemon not running. Start with: sudo node daemon/daemon.cjs');
   }
 
-  // Enable blocking on startup
-  const blocked = getBlockedDomains();
-  const success = await enableBlocking(blocked);
+  // Enable blocking on startup (respecting any existing allowances)
+  const effectivelyBlocked = getEffectivelyBlockedDomains();
+  const success = await enableBlocking(effectivelyBlocked);
   shieldActive = success;
   lastAllowanceCount = getActiveAllowances().length;
+
+  // Load blocked paths into proxy
+  const paths = getBlockedPaths();
+  const pathMap = new Map<string, string[]>();
+  for (const [domain, patterns] of Object.entries(paths)) {
+    pathMap.set(domain, patterns);
+  }
+  setBlockedPaths(pathMap);
+
+  // Start proxy server
+  startProxy();
+  console.log('   Configure system proxy: System Settings → Network → Wi-Fi → Details → Proxies');
+  console.log('   Set HTTP & HTTPS proxy to: 127.0.0.1:8080');
 
   // Start expiry checker
   setInterval(checkAllowanceExpiry, 30000);
@@ -250,7 +325,7 @@ async function start(): Promise<void> {
   server.listen(API_PORT, '127.0.0.1', () => {
     console.log(`🛡️  Focus Shield API running on http://127.0.0.1:${API_PORT}`);
     console.log(`   Shield active: ${shieldActive}`);
-    console.log(`   Blocked domains: ${blocked.length}`);
+    console.log(`   Blocked domains: ${getBlockedDomains().length} (${effectivelyBlocked.length} effective)`);
     console.log(`   Delayed domains: ${getDelayedDomains().length}`);
   });
 }

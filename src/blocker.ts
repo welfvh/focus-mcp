@@ -100,11 +100,24 @@ async function updateHostsFile(): Promise<boolean> {
 
 export async function flushDnsCache(): Promise<void> {
   try {
-    execSync('dscacheutil -flushcache', { stdio: 'ignore' });
-    execSync('killall -HUP mDNSResponder 2>/dev/null || true', { stdio: 'ignore' });
-    log('DNS cache flushed');
+    // Call daemon which runs as root - can flush DNS without sudo
+    const res = await daemonRequest('POST', '/flush-dns', {});
+    if (res.success) {
+      log('DNS cache flushed via daemon');
+    } else {
+      // Fallback to direct call (may fail without sudo)
+      execSync('dscacheutil -flushcache', { stdio: 'ignore' });
+      execSync('killall -HUP mDNSResponder 2>/dev/null || true', { stdio: 'ignore' });
+      log('DNS cache flushed (direct)');
+    }
   } catch {
-    // Ignore errors
+    // Fallback to direct call
+    try {
+      execSync('dscacheutil -flushcache', { stdio: 'ignore' });
+      log('DNS cache flushed (fallback)');
+    } catch {
+      // Ignore errors
+    }
   }
 }
 
