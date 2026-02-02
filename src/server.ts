@@ -44,6 +44,7 @@ import {
   hasHostsEntries,
   isDaemonRunning,
   flushDnsCache,
+  enforceBlockViaDaemon,
 } from './blocker';
 
 const app = express();
@@ -90,6 +91,9 @@ app.post('/api/block', async (req: Request, res: Response) => {
   if (shieldActive) {
     await enableBlocking(getBlockedDomains());
     await flushDnsCache();
+    // Aggressively enforce: kill connections and close browser tabs
+    // This ensures browsers don't keep using cached DNS or existing connections
+    await enforceBlockViaDaemon(domain);
   }
 
   res.json({ success: true, domain, blocked: true });
@@ -147,6 +151,10 @@ app.delete('/api/grant/:domain', async (req: Request, res: Response) => {
     // Use effectively blocked domains (re-add revoked domain to hosts)
     await enableBlocking(getEffectivelyBlockedDomains());
   }
+
+  // Tell daemon to kill existing connections (instant reblock)
+  const { revokeAllowanceViaDaemon } = await import('./blocker.js');
+  await revokeAllowanceViaDaemon(domain);
 
   res.json({ success: true, domain, revoked: true });
 });

@@ -21,6 +21,16 @@ block drop out quick proto tcp to 192.133.77.0/24
 # Meta/Facebook/Instagram (AS32934)
 block drop out quick proto tcp to 157.240.0.0/16
 block drop out quick proto tcp to 31.13.0.0/16
+# Meta new ranges (2024+)
+block drop out quick proto tcp to 57.141.0.0/16
+block drop out quick proto tcp to 57.142.0.0/16
+block drop out quick proto tcp to 57.143.0.0/16
+block drop out quick proto tcp to 57.144.0.0/16
+block drop out quick proto tcp to 57.145.0.0/16
+block drop out quick proto tcp to 57.146.0.0/16
+block drop out quick proto tcp to 57.147.0.0/16
+block drop out quick proto tcp to 57.148.0.0/16
+block drop out quick proto tcp to 57.149.0.0/16
 block drop out quick proto tcp to 179.60.192.0/22
 block drop out quick proto tcp to 185.60.216.0/22
 block drop out quick proto tcp to 66.220.144.0/20

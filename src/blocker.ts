@@ -98,6 +98,39 @@ async function updateHostsFile(): Promise<boolean> {
   }
 }
 
+// Tell daemon to revoke allowance and kill existing connections
+export async function revokeAllowanceViaDaemon(domain: string): Promise<boolean> {
+  try {
+    const res = await daemonRequest('POST', '/revoke', { domain });
+    if (res.success) {
+      log(`Revoked allowance via daemon: ${domain} (connections killed)`);
+      return true;
+    }
+    logError('Daemon rejected revoke:', res.error);
+    return false;
+  } catch (err) {
+    logError('Failed to revoke via daemon:', err);
+    return false;
+  }
+}
+
+// Aggressively enforce a new block: kill connections and close browser tabs
+// This ensures browsers don't keep using cached DNS or existing connections
+export async function enforceBlockViaDaemon(domain: string): Promise<boolean> {
+  try {
+    const res = await daemonRequest('POST', '/enforce-block', { domain });
+    if (res.success) {
+      log(`Block enforced via daemon: ${domain} (connections killed, tabs closed)`);
+      return true;
+    }
+    logError('Daemon rejected enforce-block:', res.error);
+    return false;
+  } catch (err) {
+    logError('Failed to enforce block via daemon:', err);
+    return false;
+  }
+}
+
 export async function flushDnsCache(): Promise<void> {
   try {
     // Call daemon which runs as root - can flush DNS without sudo

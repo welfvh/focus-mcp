@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const path = require('path');
+const dns = require('dns');
 
 const SOCKET_PATH = '/tmp/focusshield.sock';
 const HOSTS_PATH = '/etc/hosts';
@@ -145,6 +146,141 @@ function flushDnsCache() {
   }
 }
 
+// Resolve domain to IPs using external DNS
+function resolveDomainIPs(domain) {
+  try {
+    const result = execSync(`dig +short ${domain} @8.8.8.8 2>/dev/null`, { encoding: 'utf8' });
+    return result.trim().split('\n').filter(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip));
+  } catch (e) {
+    log(`Could not resolve ${domain}: ${e.message}`);
+    return [];
+  }
+}
+
+// Dynamic pf rules for specific domains
+const DYNAMIC_PF_PATH = '/etc/pf.anchors/com.welf.focusshield.dynamic';
+
+function blockDomainIPs(domain) {
+  const ips = resolveDomainIPs(domain);
+  if (!domain.startsWith('www.')) {
+    ips.push(...resolveDomainIPs('www.' + domain));
+  }
+
+  if (ips.length === 0) {
+    log(`No IPs found for ${domain}`);
+    return;
+  }
+
+  // Read existing dynamic rules
+  let existing = '';
+  try { existing = fs.readFileSync(DYNAMIC_PF_PATH, 'utf8'); } catch (e) {}
+
+  // Add rules for this domain (both TCP and UDP for QUIC)
+  let newRules = existing;
+  for (const ip of ips) {
+    const tcpRule = `block drop out quick proto tcp to ${ip} # ${domain}`;
+    const udpRule = `block drop out quick proto udp to ${ip} # ${domain}`;
+    if (!newRules.includes(tcpRule)) {
+      newRules += tcpRule + '\n';
+      newRules += udpRule + '\n';
+    }
+  }
+
+  fs.writeFileSync(DYNAMIC_PF_PATH, newRules);
+
+  // Reload pf and kill connections
+  try {
+    execSync('pfctl -f /etc/pf.conf 2>/dev/null', { encoding: 'utf8' });
+    for (const ip of ips) {
+      execSync(`pfctl -k 0.0.0.0/0 -k ${ip} 2>/dev/null`, { encoding: 'utf8' });
+    }
+    log(`Blocked IPs for ${domain}: ${ips.join(', ')}`);
+  } catch (e) {
+    log(`pf reload error: ${e.message}`);
+  }
+}
+
+function unblockDomainIPs(domain) {
+  try {
+    let rules = fs.readFileSync(DYNAMIC_PF_PATH, 'utf8');
+    // Remove lines containing this domain
+    const lines = rules.split('\n').filter(line => !line.includes(`# ${domain}`));
+    fs.writeFileSync(DYNAMIC_PF_PATH, lines.join('\n'));
+    execSync('pfctl -f /etc/pf.conf 2>/dev/null', { encoding: 'utf8' });
+    log(`Unblocked IPs for ${domain}`);
+  } catch (e) {
+    log(`Unblock error: ${e.message}`);
+  }
+}
+
+// Kill existing TCP connections to a domain's IPs
+function killConnectionsToDomain(domain) {
+  const ips = resolveDomainIPs(domain);
+  if (!domain.startsWith('www.')) {
+    ips.push(...resolveDomainIPs('www.' + domain));
+  }
+
+  for (const ip of ips) {
+    try {
+      execSync(`pfctl -k 0.0.0.0/0 -k ${ip} 2>/dev/null`, { encoding: 'utf8' });
+      log(`Killed connections to ${ip} (${domain})`);
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+}
+
+// Close browser tabs containing the blocked domain
+function closeBrowserTabs(domain) {
+  // Safari
+  try {
+    execSync(`osascript -e 'tell application "Safari"
+      set windowList to every window
+      repeat with w in windowList
+        set tabList to every tab of w
+        repeat with t in tabList
+          if URL of t contains "${domain}" then
+            close t
+          end if
+        end repeat
+      end repeat
+    end tell' 2>/dev/null`, { encoding: 'utf8' });
+    log(`Closed Safari tabs for ${domain}`);
+  } catch (e) {}
+
+  // Arc
+  try {
+    execSync(`osascript -e 'tell application "Arc"
+      set windowList to every window
+      repeat with w in windowList
+        set tabList to every tab of w
+        repeat with t in tabList
+          if URL of t contains "${domain}" then
+            close t
+          end if
+        end repeat
+      end repeat
+    end tell' 2>/dev/null`, { encoding: 'utf8' });
+    log(`Closed Arc tabs for ${domain}`);
+  } catch (e) {}
+
+  // Chrome
+  try {
+    execSync(`osascript -e 'tell application "Google Chrome"
+      set windowList to every window
+      repeat with w in windowList
+        set tabList to every tab of w
+        repeat with t in tabList
+          if URL of t contains "${domain}" then
+            close t
+          end if
+        end repeat
+      end repeat
+    end tell' 2>/dev/null`, { encoding: 'utf8' });
+    log(`Closed Chrome tabs for ${domain}`);
+  } catch (e) {}
+}
+
 function generatePfRules() {
   // Static IP ranges for major distraction sites
   const rules = `# cc-focus pf rules - generated ${new Date().toISOString()}
@@ -162,6 +298,16 @@ block drop out quick proto tcp to 192.133.77.0/24
 # Meta/Facebook/Instagram (AS32934)
 block drop out quick proto tcp to 157.240.0.0/16
 block drop out quick proto tcp to 31.13.0.0/16
+# Meta new ranges (2024+)
+block drop out quick proto tcp to 57.141.0.0/16
+block drop out quick proto tcp to 57.142.0.0/16
+block drop out quick proto tcp to 57.143.0.0/16
+block drop out quick proto tcp to 57.144.0.0/16
+block drop out quick proto tcp to 57.145.0.0/16
+block drop out quick proto tcp to 57.146.0.0/16
+block drop out quick proto tcp to 57.147.0.0/16
+block drop out quick proto tcp to 57.148.0.0/16
+block drop out quick proto tcp to 57.149.0.0/16
 block drop out quick proto tcp to 179.60.192.0/22
 block drop out quick proto tcp to 185.60.216.0/22
 block drop out quick proto tcp to 66.220.144.0/20
@@ -209,8 +355,13 @@ function refreshBlocking() {
 
 // Check for expired allowances every 30 seconds
 let lastAllowanceCount = 0;
+let lastAllowanceDomains = new Set();
 function checkAllowanceExpiry() {
   const active = getActiveAllowances();
+  const activeDomains = new Set(active.map(a => a.domain));
+
+  // Find which domains expired
+  const expiredDomains = [...lastAllowanceDomains].filter(d => !activeDomains.has(d));
 
   // Clean expired from state
   if (active.length !== state.allowances.length) {
@@ -218,13 +369,21 @@ function checkAllowanceExpiry() {
     saveState();
   }
 
-  // If count dropped, an allowance expired - refresh blocking
-  if (active.length < lastAllowanceCount) {
-    log(`Allowance expired (${lastAllowanceCount} -> ${active.length}), re-blocking...`);
+  // If allowances expired, refresh blocking and kill connections
+  if (expiredDomains.length > 0) {
+    log(`Allowances expired for: ${expiredDomains.join(', ')}`);
     refreshBlocking();
+    // Block IPs, kill connections, close tabs for expired domains
+    for (const domain of expiredDomains) {
+      blockDomainIPs(domain);
+      killConnectionsToDomain(domain);
+      closeBrowserTabs(domain);
+    }
+    flushDnsCache();
   }
 
   lastAllowanceCount = active.length;
+  lastAllowanceDomains = activeDomains;
 }
 
 // Start expiry checker
@@ -275,16 +434,35 @@ const server = http.createServer((req, res) => {
         state.allowances.push(allowance);
         lastAllowanceCount = state.allowances.length;
         saveState();
+        // Remove IP blocks for this domain
+        unblockDomainIPs(domain.toLowerCase());
         refreshBlocking();
 
         res.end(JSON.stringify({ success: true, allowance }));
 
       } else if (req.url === '/revoke' && req.method === 'POST') {
-        // Revoke allowance
+        // Revoke allowance - with aggressive IP blocking + connection killing
         const { domain } = data;
         state.allowances = state.allowances.filter(a => a.domain.toLowerCase() !== domain.toLowerCase());
         saveState();
         refreshBlocking();
+        // Block IPs dynamically, kill connections, close browser tabs
+        blockDomainIPs(domain.toLowerCase());
+        killConnectionsToDomain(domain.toLowerCase());
+        closeBrowserTabs(domain.toLowerCase());
+        flushDnsCache();
+        log(`Revoked with IP blocking + tabs closed for ${domain}`);
+        res.end(JSON.stringify({ success: true }));
+
+      } else if (req.url === '/enforce-block' && req.method === 'POST') {
+        // Aggressively enforce a new block: kill connections, close tabs
+        // Called when adding a domain to blocklist to ensure immediate effect
+        const { domain } = data;
+        blockDomainIPs(domain.toLowerCase());
+        killConnectionsToDomain(domain.toLowerCase());
+        closeBrowserTabs(domain.toLowerCase());
+        flushDnsCache();
+        log(`Block enforced: ${domain} (IPs blocked, connections killed, tabs closed)`);
         res.end(JSON.stringify({ success: true }));
 
       } else if (req.url === '/enable' && req.method === 'POST') {
