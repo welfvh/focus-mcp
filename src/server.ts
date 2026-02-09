@@ -46,6 +46,7 @@ import {
   flushDnsCache,
   enforceBlockViaDaemon,
 } from './blocker';
+import { mountMCP } from './mcp.js';
 
 const app = express();
 const API_PORT = 8053;
@@ -324,6 +325,9 @@ async function start(): Promise<void> {
   startProxy();
   console.log('   Configure system proxy: System Settings → Network → Wi-Fi → Details → Proxies');
   console.log('   Set HTTP & HTTPS proxy to: 127.0.0.1:8080');
+
+  // Mount MCP endpoint for Claude Web access via Cloudflare Tunnel
+  mountMCP(app, () => shieldActive);
 
   // Start expiry checker
   setInterval(checkAllowanceExpiry, 30000);
