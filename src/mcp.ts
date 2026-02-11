@@ -26,6 +26,9 @@ import {
   getEffectivelyBlockedDomains,
   addBlockedDomain,
   removeBlockedDomain,
+  isHardLocked,
+  getHardLockoutUntil,
+  getActiveHardLockouts,
 } from './store.js';
 import {
   isDaemonRunning,
@@ -54,24 +57,6 @@ function loadOrCreateToken(): string {
 
 const MCP_TOKEN = process.env.CC_FOCUS_MCP_TOKEN || loadOrCreateToken();
 
-// --- Hard lockout enforcement ---
-
-const LOCKED_DOMAINS = [
-  'twitter.com', 'x.com', 'youtube.com', 'youtu.be',
-  'mobile.twitter.com', 'm.youtube.com', 'music.youtube.com',
-  'youtube-nocookie.com',
-];
-const LOCKOUT_UNTIL = new Date('2026-03-01T00:00:00');
-
-function isLockedDomain(domain: string): boolean {
-  const d = domain.toLowerCase().replace(/^www\./, '');
-  return LOCKED_DOMAINS.some(locked => d === locked || d.endsWith('.' + locked));
-}
-
-function isLockoutActive(): boolean {
-  return new Date() < LOCKOUT_UNTIL;
-}
-
 // --- Session management ---
 // Each MCP client session gets its own transport instance
 
@@ -96,8 +81,7 @@ function createMcpServer(shieldActiveGetter: () => boolean): McpServer {
         daemonRunning,
         blockedDomains: getBlockedDomains().length,
         activeAllowances: getActiveAllowances(),
-        lockedUntil: isLockoutActive() ? LOCKOUT_UNTIL.toISOString() : null,
-        lockedDomains: isLockoutActive() ? LOCKED_DOMAINS.slice(0, 4) : [],
+        hardLockouts: getActiveHardLockouts(),
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
@@ -120,7 +104,7 @@ function createMcpServer(shieldActiveGetter: () => boolean): McpServer {
     async ({ domain }) => {
       const blocked = isDomainBlocked(domain);
       const allowanceMinutes = getAllowanceRemaining(domain);
-      const locked = isLockedDomain(domain) && isLockoutActive();
+      const locked = isHardLocked(domain);
       const result = { domain, blocked, allowanceMinutes, shieldActive: shieldActiveGetter(), locked };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
@@ -166,11 +150,12 @@ Twitter/X and YouTube are HARD LOCKED until March 2026. This tool will refuse th
     },
     async ({ domain, minutes, reason }) => {
       // Hard lockout check
-      if (isLockedDomain(domain) && isLockoutActive()) {
+      if (isHardLocked(domain)) {
+        const until = getHardLockoutUntil(domain);
         return {
           content: [{
             type: 'text' as const,
-            text: `REFUSED: ${domain} is HARD LOCKED until ${LOCKOUT_UNTIL.toISOString().split('T')[0]}. No exceptions. This lockout exists because a "20 minute" session became 3+ hours on 2026-02-02. The timer approach failed. Use newsletters, RSS, or ask Claude to search instead.`,
+            text: `REFUSED: ${domain} is HARD LOCKED until ${until}. No exceptions. This lockout exists because a "20 minute" session became 3+ hours on 2026-02-02. The timer approach failed. Use newsletters, RSS, or ask Claude to search instead.`,
           }],
           isError: true,
         };
@@ -224,15 +209,16 @@ Twitter/X and YouTube are HARD LOCKED until March 2026. This tool will refuse th
     'focus_unblock',
     `Permanently remove a domain from the blocklist. Use focus_grant for temporary access instead — permanent unblock should only be used for domains that are genuinely creation/work tools.
 
-Twitter/X and YouTube are HARD LOCKED until March 2026. This tool will refuse those domains.`,
+Hard-locked domains (configured via API) will be refused.`,
     { domain: z.string().describe('The domain to unblock') },
     async ({ domain }) => {
       // Hard lockout check
-      if (isLockedDomain(domain) && isLockoutActive()) {
+      if (isHardLocked(domain)) {
+        const until = getHardLockoutUntil(domain);
         return {
           content: [{
             type: 'text' as const,
-            text: `REFUSED: ${domain} is HARD LOCKED until ${LOCKOUT_UNTIL.toISOString().split('T')[0]}. No exceptions. Not even permanent unblock.`,
+            text: `REFUSED: ${domain} is HARD LOCKED until ${until}. No exceptions. Not even permanent unblock.`,
           }],
           isError: true,
         };

@@ -29,6 +29,11 @@ import {
   getBlockedPaths,
   addBlockedPath,
   removeBlockedPath,
+  isHardLocked,
+  getHardLockoutUntil,
+  getActiveHardLockouts,
+  addHardLockout,
+  removeHardLockout,
 } from './store';
 import {
   startProxy,
@@ -103,6 +108,16 @@ app.post('/api/block', async (req: Request, res: Response) => {
 // Remove domain from blocklist
 app.delete('/api/block/:domain', async (req: Request, res: Response) => {
   const { domain } = req.params;
+
+  // Hard lockout — refuse to unblock domains with active lockouts
+  if (isHardLocked(domain)) {
+    const until = getHardLockoutUntil(domain);
+    res.status(403).json({
+      error: `REFUSED: ${domain} is HARD LOCKED until ${until}. Cannot unblock.`,
+    });
+    return;
+  }
+
   removeBlockedDomain(domain);
 
   if (shieldActive) {
@@ -125,6 +140,15 @@ app.post('/api/grant', async (req: Request, res: Response) => {
   const { domain, minutes, reason } = req.body;
   if (!domain || !minutes) {
     res.status(400).json({ error: 'domain and minutes required' });
+    return;
+  }
+
+  // Hard lockout — refuse domains with active lockouts
+  if (isHardLocked(domain)) {
+    const until = getHardLockoutUntil(domain);
+    res.status(403).json({
+      error: `REFUSED: ${domain} is HARD LOCKED until ${until}. No exceptions.`,
+    });
     return;
   }
 
@@ -285,6 +309,31 @@ app.post('/api/flush-dns', async (_req: Request, res: Response) => {
   } catch (e) {
     res.status(500).json({ error: 'Failed to flush DNS', details: String(e) });
   }
+});
+
+// === Hard lockout management ===
+
+// List active hard lockouts
+app.get('/api/locks', (_req: Request, res: Response) => {
+  res.json({ lockouts: getActiveHardLockouts() });
+});
+
+// Add a hard lockout
+app.post('/api/lock', (req: Request, res: Response) => {
+  const { domain, until } = req.body;
+  if (!domain || !until) {
+    res.status(400).json({ error: 'domain and until (ISO date) required' });
+    return;
+  }
+  addHardLockout(domain, until);
+  res.json({ success: true, domain, until });
+});
+
+// Remove a hard lockout
+app.delete('/api/lock/:domain', (req: Request, res: Response) => {
+  const { domain } = req.params;
+  removeHardLockout(domain);
+  res.json({ success: true, domain, removed: true });
 });
 
 // Allowance expiry checker

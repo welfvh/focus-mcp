@@ -23,45 +23,82 @@ interface DelaySession {
   lastResetDate: string;
 }
 
+interface HardLockout {
+  domain: string;
+  until: string; // ISO date string, e.g. "2026-03-01"
+}
+
 interface StoreSchema {
   blockedDomains: string[];
   delayedDomains: string[];
   blockedPaths: Record<string, string[]>; // { domain: [path patterns] }
   allowances: Allowance[];
   delaySessions: DelaySession[];
+  hardLockouts: HardLockout[];
+  enabledCategories: string[]; // which block categories are active
 }
 
-const DEFAULT_BLOCKED: string[] = [
-  // Social media & entertainment
-  'youtube.com', 'youtu.be', 'netflix.com', 'twitter.com', 'x.com',
-  'facebook.com', 'instagram.com', 'tiktok.com', 'reddit.com',
-  'twitch.tv', 'news.ycombinator.com', 'linkedin.com', 'discord.com',
-  'threads.net', 'bsky.app', 'pinterest.com', 'amazon.com', 'ebay.com',
-  'kleinanzeigen.de', 'substack.com', 'polymarket.com',
-  // NSFW
-  'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'redtube.com',
-  'youporn.com', 'tube8.com', 'spankbang.com', 'eporner.com', 'porntrex.com',
-  'txxx.com', 'hqporner.com', 'beeg.com', 'porn.com', 'thumbzilla.com',
-  'pornone.com', 'fuq.com', 'tnaflix.com', 'drtuber.com', 'porndig.com',
-  'youjizz.com', 'motherless.com', 'heavy-r.com', 'efukt.com', 'ixxx.com',
-  'hclips.com', 'pornhat.com', 'pornmd.com', 'nudevista.com', 'lobstertube.com',
-  'freeones.com', 'cam4.com', 'chaturbate.com', 'bongacams.com', 'stripchat.com',
-  'myfreecams.com', 'livejasmin.com', 'camsoda.com', 'flirt4free.com',
-  'onlyfans.com', 'fansly.com', 'pornpics.com', 'imagefap.com', 'sex.com',
-  'literotica.com', 'rule34.xxx', 'e621.net', 'gelbooru.com', 'nhentai.net',
-  'hentaihaven.xxx', 'hanime.tv', 'fakku.net', 'tsumino.com', 'hitomi.la',
-  '8muses.com', 'simpcity.su', 'coomer.su', 'kemono.su', 'fapello.com',
-  'sxyprn.com', 'daftsex.com', 'javlibrary.com', 'missav.com',
-];
+// Block categories — each is a named group of domains.
+// Users select which categories to enable during install.
+export const BLOCK_CATEGORIES: Record<string, string[]> = {
+  social: [
+    'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'tiktok.com',
+    'reddit.com', 'linkedin.com', 'discord.com', 'threads.net', 'bsky.app',
+    'pinterest.com', 'news.ycombinator.com', 'polymarket.com',
+  ],
+  video: [
+    'youtube.com', 'youtu.be', 'netflix.com', 'twitch.tv',
+  ],
+  news: [
+    'substack.com',
+  ],
+  shopping: [
+    'amazon.com', 'ebay.com', 'kleinanzeigen.de',
+  ],
+  adult: [
+    'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'redtube.com',
+    'youporn.com', 'tube8.com', 'spankbang.com', 'eporner.com', 'porntrex.com',
+    'txxx.com', 'hqporner.com', 'beeg.com', 'porn.com', 'thumbzilla.com',
+    'pornone.com', 'fuq.com', 'tnaflix.com', 'drtuber.com', 'porndig.com',
+    'youjizz.com', 'motherless.com', 'heavy-r.com', 'efukt.com', 'ixxx.com',
+    'hclips.com', 'pornhat.com', 'pornmd.com', 'nudevista.com', 'lobstertube.com',
+    'freeones.com', 'cam4.com', 'chaturbate.com', 'bongacams.com', 'stripchat.com',
+    'myfreecams.com', 'livejasmin.com', 'camsoda.com', 'flirt4free.com',
+    'onlyfans.com', 'fansly.com', 'pornpics.com', 'imagefap.com', 'sex.com',
+    'literotica.com', 'rule34.xxx', 'e621.net', 'gelbooru.com', 'nhentai.net',
+    'hentaihaven.xxx', 'hanime.tv', 'fakku.net', 'tsumino.com', 'hitomi.la',
+    '8muses.com', 'simpcity.su', 'coomer.su', 'kemono.su', 'fapello.com',
+    'sxyprn.com', 'daftsex.com', 'javlibrary.com', 'missav.com',
+  ],
+  gambling: [
+    'bet365.com', 'draftkings.com', 'fanduel.com', 'bovada.lv',
+    'pokerstars.com', 'betway.com', 'williamhill.com',
+  ],
+};
+
+// Default enabled categories for new installs
+const DEFAULT_CATEGORIES = ['social', 'video', 'news', 'adult'];
+
+/** Merge selected category domains into a flat blocklist. */
+export function domainsForCategories(categories: string[]): string[] {
+  const all = new Set<string>();
+  for (const cat of categories) {
+    const domains = BLOCK_CATEGORIES[cat];
+    if (domains) domains.forEach(d => all.add(d));
+  }
+  return [...all];
+}
 
 const DEFAULT_DELAYED: string[] = ['gmail.com', 'mail.google.com', 'are.na'];
 
 const DEFAULTS: StoreSchema = {
-  blockedDomains: DEFAULT_BLOCKED,
+  blockedDomains: domainsForCategories(DEFAULT_CATEGORIES),
   delayedDomains: DEFAULT_DELAYED,
   blockedPaths: {},
   allowances: [],
   delaySessions: [],
+  hardLockouts: [],
+  enabledCategories: DEFAULT_CATEGORIES,
 };
 
 // In-memory cache
@@ -337,4 +374,62 @@ export function removeBlockedPath(domain: string, pathPattern: string): void {
     }
     store.set('blockedPaths', paths);
   }
+}
+
+// Hard lockout functions — config-driven domain locks with expiry dates.
+// Replaces hardcoded LOCKED_DOMAINS in server.ts and mcp.ts.
+
+export function getHardLockouts(): HardLockout[] {
+  return store.get('hardLockouts', []);
+}
+
+export function addHardLockout(domain: string, until: string): void {
+  const normalized = normalizeDomain(domain);
+  const lockouts = store.get('hardLockouts', []);
+  const filtered = lockouts.filter(l => normalizeDomain(l.domain) !== normalized);
+  store.set('hardLockouts', [...filtered, { domain: normalized, until }]);
+}
+
+export function removeHardLockout(domain: string): void {
+  const normalized = normalizeDomain(domain);
+  const lockouts = store.get('hardLockouts', []);
+  store.set('hardLockouts', lockouts.filter(l => normalizeDomain(l.domain) !== normalized));
+}
+
+/** Check if a domain is hard-locked (locked and lockout period hasn't expired). */
+export function isHardLocked(domain: string): boolean {
+  const normalized = normalizeDomain(domain);
+  const lockouts = store.get('hardLockouts', []);
+  const now = new Date();
+  return lockouts.some(l => {
+    const lockDomain = normalizeDomain(l.domain);
+    const matches = normalized === lockDomain || normalized.endsWith('.' + lockDomain);
+    if (!matches) return false;
+    return now < new Date(l.until);
+  });
+}
+
+/** Get the lockout expiry date for a domain, or null if not locked. */
+export function getHardLockoutUntil(domain: string): string | null {
+  const normalized = normalizeDomain(domain);
+  const lockouts = store.get('hardLockouts', []);
+  const now = new Date();
+  const lockout = lockouts.find(l => {
+    const lockDomain = normalizeDomain(l.domain);
+    const matches = normalized === lockDomain || normalized.endsWith('.' + lockDomain);
+    return matches && now < new Date(l.until);
+  });
+  return lockout?.until ?? null;
+}
+
+/** Get all currently active hard lockouts (not expired). */
+export function getActiveHardLockouts(): HardLockout[] {
+  const lockouts = store.get('hardLockouts', []);
+  const now = new Date();
+  return lockouts.filter(l => now < new Date(l.until));
+}
+
+/** Get enabled category names. */
+export function getEnabledCategories(): string[] {
+  return store.get('enabledCategories', DEFAULT_CATEGORIES);
 }
