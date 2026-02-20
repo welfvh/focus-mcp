@@ -234,4 +234,4 @@ Removes services, hosts entries, and pf rules. Config is preserved by default (p
 
 ## License
 
-MIT
+Personal use only. See [LICENSE](LICENSE).
