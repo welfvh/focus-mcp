@@ -235,3 +235,4 @@ Removes services, hosts entries, and pf rules. Config is preserved by default (p
 ## License
 
 Personal use only. See [LICENSE](LICENSE).
+
